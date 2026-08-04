@@ -153,12 +153,17 @@ one file per `shard x window_size x agg`, so 366 shards x 2 x 2 = **1,464 npz pe
 across ten. `tabularize-static` writes nothing here: `static_aggs` keeps only static aggregations,
 and this recipe's `aggs=[code/count,value/sum]` contains none.
 
-Size scales with `label_rows x 100 codes x 4 (window,agg) combinations`. For the ten selected tasks
-that's 1.38M label rows total. Bounds: ~0.1 GB if density matches the synthetic fixture, ~2 GB if
-every code is present in every window (fully dense). Expect a few hundred MB — real ICU patients
-have far denser 7-day windows than the fixture. Trivial either way; the pipeline artifacts already
-in `work/` are ~93 MB. The `baseline` step prints actual disk per task, so the first task calibrates
-the rest.
+**Measured on MIMIC-IV** (`LAB_51146_3d`, 196k label rows): mean npz ~0.16 MB, so **~0.23 GB per
+task, ~2.3 GB for all ten** — the dense end of the range, since real ICU 7-day windows touch most
+of the top-100 codes. Add ~1.2 GB once for the MEDS-DEV model venv, which lives at
+`$WORK/baseline/.venv` and is shared by every task. Storage is not the constraint.
+
+**Time is.** Tabularization ran at ~0.14 npz/s single-worker, i.e. **~3 hours per task** for 1,464
+files, so all ten would be ~30 hours. Levers, cheapest first: run fewer tasks; raise
+`worker="range(0,N)"` (the recipe pins one joblib worker — this requires a local model.yaml variant,
+since the `uv tool` install is what executes, not the checkout); or tabularize once and share across
+tasks, which is sound because all ten tasks share the *same* sampled prediction times and differ
+only in the label column and which rows censoring drops.
 
 ### Parallelism and memory
 
