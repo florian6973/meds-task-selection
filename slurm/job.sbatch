@@ -61,14 +61,27 @@ if [ -n "${VENV_DIR:-}" ]; then
   MODEL_ARGS+=("venv_dir=$VENV_DIR")
 fi
 
-srun --unbuffered /usr/bin/time -v meds-dev-model "${MODEL_ARGS[@]}"
+# GNU time is a convenience for peak-RSS reporting, not a dependency: plenty of compute nodes have a
+# bare /usr/bin without it, and `time` alone is a shell keyword that cannot wrap an srun task. Fall
+# back to running unwrapped -- `sacct -j <jobid> --format=MaxRSS` reports the same number afterwards.
+TIMER=()
+for candidate in /usr/bin/time /bin/time "$(command -v gtime || true)"; do
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then TIMER=("$candidate" -v); break; fi
+done
+[ "${#TIMER[@]}" -gt 0 ] || echo "note: GNU time not found; use 'sacct -j \$SLURM_JOB_ID --format=MaxRSS' for peak memory"
+
+# `${TIMER[@]+...}` rather than a bare `"${TIMER[@]}"`: expanding an empty array under `set -u` is an
+# unbound-variable error on bash < 4.4, which is still what RHEL 7 era compute nodes ship.
+srun --unbuffered ${TIMER[@]+"${TIMER[@]}"} meds-dev-model "${MODEL_ARGS[@]}"
 
 srun --unbuffered meds-dev-evaluation \
   "predictions_dir=$out/$DATASET_NAME/$task/predict" \
   "output_dir=$RUN_DIR/eval/$task"
 
 echo "[$(date -Is)] done task=$task"
-python - "$RUN_DIR/eval/$task/results.json" <<'PY'
+# Use MEDS-DEV's own interpreter: a bare `python` may not exist on a compute node, and this one is
+# guaranteed present because its CLIs just ran.
+"$MEDS_DEV_BIN/python" - "$RUN_DIR/eval/$task/results.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))["samples_equally_weighted"]
 print("AUROC {:.4f}  AP {:.4f}  calib_err {:.4f}".format(

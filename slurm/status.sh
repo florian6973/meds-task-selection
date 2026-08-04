@@ -13,6 +13,14 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # shellcheck source=config.sh
 source slurm/config.sh
 
+# A bare `python` is not guaranteed on a login node either; prefer MEDS-DEV's own interpreter.
+PY_BIN=python
+if command -v meds-dev-model >/dev/null; then
+    PY_BIN="$(dirname "$(sed -n '1s|^#!||p' "$(command -v meds-dev-model)")")/python"
+elif command -v python3 >/dev/null; then
+    PY_BIN=python3
+fi
+
 # Expected npz = shards x |window_sizes| x |aggs|; the tiny recipe uses 2 windows and 2 aggs.
 shards=0
 if [ -d "$MEDS_ROOT/data" ]; then
@@ -36,7 +44,7 @@ for dir in "$RUN_DIR"/*/; do
 
     results="$RUN_DIR/eval/$task/results.json"
     if [ -f "$results" ]; then
-        line=$(python - "$results" <<'PY'
+        line=$("$PY_BIN" - "$results" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))["samples_equally_weighted"]
 print("AUROC {:.4f}  AP {:.4f}".format(m["roc_auc_score"], m["average_precision_score"]))
