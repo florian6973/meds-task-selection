@@ -159,11 +159,12 @@ of the top-100 codes. Add ~1.2 GB once for the MEDS-DEV model venv, which lives 
 `$WORK/baseline/.venv` and is shared by every task. Storage is not the constraint.
 
 **Time is.** Tabularization ran at ~0.14 npz/s single-worker, i.e. **~3 hours per task** for 1,464
-files, so all ten would be ~30 hours. Levers, cheapest first: run fewer tasks; raise
-`worker="range(0,N)"` (the recipe pins one joblib worker — this requires a local model.yaml variant,
-since the `uv tool` install is what executes, not the checkout); or tabularize once and share across
-tasks, which is sound because all ten tasks share the *same* sampled prediction times and differ
-only in the label column and which rows censoring drops.
+files, so all ten would be ~30 hours serially. The cheapest fix is a cluster: see
+[slurm/README.md](slurm/README.md), which runs one array element per task and turns ~30 h serial
+into ~3 h wall. Otherwise: run fewer tasks; raise `worker="range(0,N)"` (the recipe pins one joblib
+worker — this needs a local model.yaml variant, since the `uv tool` install executes, not the
+checkout); or tabularize once and share across tasks, which is sound because all ten share the
+*same* sampled prediction times and differ only in the label column and which rows censoring drops.
 
 ### Parallelism and memory
 

@@ -1,0 +1,52 @@
+# Site and run configuration for the meds_tab/tiny baseline. **This is the file you edit.**
+#
+# Every value is also overridable from the environment, so a one-off does not need an edit:
+#   TIME=12:00:00 CPUS=8 ./slurm/submit.sh
+#
+# Sourced by both `slurm/submit.sh` (login node) and `slurm/job.sbatch` (compute node), so keep it
+# free of anything that only works in one of those places.
+
+# ---------------------------------------------------------------------------------------------------
+# Where the data is (all paths are cluster-side)
+# ---------------------------------------------------------------------------------------------------
+
+#: MEDS dataset sharded by split (data/train/…, data/tuning/…, data/held_out/…).
+: "${MEDS_ROOT:=/path/to/MIMIC-IV/MEDS_cohort}"
+
+#: Labels root copied from the workstation: one dir per task, each holding {split}/{shard}.parquet
+#: mirroring MEDS_ROOT's shards. See `slurm/README.md` for the rsync command.
+: "${LABELS_ROOT:=$PWD/labels}"
+
+#: The task registry that names which tasks to run (task_id per entry).
+: "${TASKS_YAML:=$PWD/tasks.yaml}"
+
+#: Root for everything the jobs produce. Each task gets `$RUN_DIR/<task>/`, which keeps their model
+#: venvs separate — MEDS-Tab's installer runs `uv venv --clear`, so a venv shared by concurrent array
+#: elements would be wiped out from under whichever element started first.
+: "${RUN_DIR:=$PWD/runs/baseline}"
+
+#: Only used to name output subdirectories, so it need not match a MEDS-DEV dataset registry entry.
+: "${DATASET_NAME:=MIMIC-IV}"
+
+# ---------------------------------------------------------------------------------------------------
+# Scheduler
+# ---------------------------------------------------------------------------------------------------
+# Empty values are omitted from the sbatch command line rather than passed as empty flags, so leaving
+# ACCOUNT/QOS/PARTITION unset just means "whatever the cluster defaults to".
+
+: "${ACCOUNT:=}"       # --account
+: "${QOS:=}"           # --qos
+: "${PARTITION:=}"     # --partition
+: "${CPUS:=4}"         # --cpus-per-task; also caps XGBoost and polars threads inside the job
+: "${MEM:=32G}"        # --mem
+: "${TIME:=08:00:00}"  # --time; one task measured ~3 h on a workstation, so this has headroom
+: "${MAX_CONCURRENT:=}" # array throttle, e.g. 4 -> `--array=1-10%4`. Empty means no limit.
+
+# ---------------------------------------------------------------------------------------------------
+# The job environment
+# ---------------------------------------------------------------------------------------------------
+
+#: Runs inside the job, before anything else. Whatever puts `meds-dev-model` and `uv` on PATH —
+#: a module load, a conda activate, `source ~/.venv/bin/activate`, …
+#: Assigned only when *unset* (no colon), so `SETUP=` genuinely means "nothing to do".
+: "${SETUP=}"
