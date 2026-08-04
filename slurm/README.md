@@ -105,6 +105,36 @@ hardware.
 Both `submit.sh` and `job.sbatch` check that a task's label shards exist before doing any work, so a
 bad path fails in seconds on the login node rather than hours into an array element.
 
+## Tracking progress
+
+```bash
+./slurm/status.sh              # one line per task
+watch -n 60 ./slurm/status.sh  # live
+```
+
+```
+TASK                                       TABULARIZE         RESULT
+LAB_51146_3d                               114/1464 (7%)      -
+INFUSION_START_220949_180d                 1464/1464 (100%)   training xgboost
+DIAGNOSIS_ICD_10_E785_365d                 1464/1464 (100%)   AUROC 0.7312  AP 0.2841
+```
+
+SLURM alone reports only `RUNNING` for hours. Tabularization writes one npz per
+`shard x window x agg`, so that file count is the pipeline's one fine-grained progress signal;
+later stages are inferred from the artifacts they leave. `status.sh` appends `squeue` output when
+it is available.
+
+Other useful views:
+
+```bash
+tail -f slurm-logs/meds-tab-baseline-*_1.out       # live log for array element 1
+sacct -j <jobid> --format=JobID,State,Elapsed,MaxRSS,ReqMem  # after the fact: real peak memory
+sacct -j <jobid> --format=JobID,State,ExitCode | grep -v COMPLETED   # what failed
+```
+
+`MaxRSS` from `sacct` is the number to trust when tuning `MEM` for later runs — each job also runs
+under `/usr/bin/time -v`, so its peak RSS is at the end of the element's log.
+
 ## Layout and sizing
 
 ```
