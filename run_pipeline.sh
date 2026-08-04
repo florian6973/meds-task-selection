@@ -19,7 +19,16 @@ MEASURE_SPLIT="${MEASURE_SPLIT:-tuning}"
 FINAL_SPLITS="${FINAL_SPLITS:-train tuning held_out}"
 
 export POLARS_MAX_THREADS="$JOBS"
-unset VIRTUAL_ENV # a foreign active venv would shadow the per-project ones below
+
+# An activated venv shadows the per-project environments used below (and MEDS-DEV's tool env in
+# the baseline step), so drop it from PATH entirely rather than just unsetting the marker variable.
+_ACTIVE_VENV_BIN=""
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+    _ACTIVE_VENV_BIN="$VIRTUAL_ENV/bin"
+    PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$_ACTIVE_VENV_BIN" | paste -sd:)"
+    export PATH
+fi
+unset VIRTUAL_ENV
 
 SAMPLER=/home/fpollet/Git/meds-random-task-sampler
 SELECTION=/home/fpollet/Git/meds-task-selection
@@ -114,21 +123,33 @@ fi
 if run_step baseline; then
     echo "== meds_tab/tiny baseline"
     : "${DATASET_NAME:=MIMIC-IV}"
-    # The MEDS-DEV CLIs shell out to sibling tools (notably meds-evaluation-cli).  If another
-    # venv sits earlier on PATH, its copy wins and the inner command fails with a confusing
-    # omegaconf traceback, so put MEDS-DEV's own environment first.
+    # MEDS-DEV's CLIs shell out to sibling tools -- meds-dev-evaluation invokes
+    # meds-evaluation-cli -- and expect to find them alongside themselves.  With a `uv tool`
+    # install only MEDS-DEV's *own* entry points are symlinked into ~/.local/bin; its
+    # dependencies' scripts (meds-evaluation-cli among them) exist solely inside the tool
+    # environment.  So dropping a stray venv from PATH is necessary but not sufficient: without
+    # the tool env on PATH, the inner command is either missing or served by whichever unrelated
+    # venv comes first, which fails with a misleading config-override traceback.  Do both.
     if ! command -v meds-dev-model >/dev/null; then
         echo "meds-dev-model not found; install MEDS-DEV (uv tool install meds-dev)" >&2
         exit 1
     fi
     MEDS_DEV_BIN="$(dirname "$(sed -n '1s|^#!||p' "$(command -v meds-dev-model)")")"
+    if [[ -n "${_ACTIVE_VENV_BIN:-}" ]]; then # stripped from PATH at the top of this script
+        echo "-- dropped $_ACTIVE_VENV_BIN from PATH"
+    fi
     export PATH="$MEDS_DEV_BIN:$PATH"
     : "${TASKS_TO_RUN:=$(uv run --project "$SELECTION" python -c "
 import yaml, sys
 print(' '.join(t['task_id'] for t in yaml.safe_load(open('$WORK/tasks.yaml'))))")}"
+    mkdir -p "$WORK/logs/baseline"
     for task in $TASKS_TO_RUN; do
         echo "-- $task"
-        OMP_NUM_THREADS="$JOBS" meds-dev-model \
+        log="$WORK/logs/baseline/$task.log"
+        # OMP_NUM_THREADS caps XGBoost's thread pool; POLARS_MAX_THREADS (exported above) caps
+        # MEDS-Tab's polars.  The recipe itself pins joblib to one worker and XGBoost tuning to
+        # n_jobs=1, so JOBS here bounds threads-within-one-process, not concurrent processes.
+        if ! /usr/bin/time -v env OMP_NUM_THREADS="$JOBS" meds-dev-model \
             model=meds_tab/tiny \
             "dataset_dir=$MEDS" \
             "labels_dir=$WORK/labels/$task" \
@@ -136,10 +157,23 @@ print(' '.join(t['task_id'] for t in yaml.safe_load(open('$WORK/tasks.yaml'))))"
             "dataset_name=$DATASET_NAME" \
             "task_name=$task" \
             dataset_type=supervised \
-            mode=full
+            mode=full >"$log" 2>&1; then
+            echo "FAILED — last 20 lines of $log:" >&2
+            tail -20 "$log" >&2
+            exit 1
+        fi
+        grep -E "Maximum resident set size|Elapsed \(wall" "$log" |
+            sed 's/^\s*/   /' # peak RSS + wall time for this task
+        du -sh "$WORK/baseline/$DATASET_NAME/$task" | sed 's/^/   disk: /'
+
         meds-dev-evaluation \
             "predictions_dir=$WORK/baseline/$DATASET_NAME/$task/predict" \
-            "output_dir=$WORK/baseline_eval/$task"
+            "output_dir=$WORK/baseline_eval/$task" >>"$log" 2>&1
+        uv run --project "$SELECTION" python -c "
+import json, sys
+m = json.load(open('$WORK/baseline_eval/$task/results.json'))['samples_equally_weighted']
+print('   AUROC {:.4f}  AP {:.4f}  calib_err {:.4f}'.format(
+    m['roc_auc_score'], m['average_precision_score'], m['calibration_error']))"
     done
 fi
 

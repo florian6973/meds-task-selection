@@ -132,16 +132,42 @@ reason. MEDS-Tab resolves a shard's labels as
 rows. The `flat` layout will not work here. Don't leave both layouts in one directory: MEDS-Tab's
 task caching globs `**/*.parquet` and would read the same labels twice.
 
-**PATH matters.** The MEDS-DEV CLIs shell out to sibling tools (`meds-evaluation-cli`). If another
-virtualenv is earlier on `PATH` — an activated project venv, say — its copy runs instead and fails
-with an opaque omegaconf traceback that looks like a config-override error. `run_pipeline.sh`
-prepends MEDS-DEV's own environment (derived from the `meds-dev-model` shebang) and unsets
-`VIRTUAL_ENV` to avoid this.
+**PATH matters, and dropping the stray venv is not enough.** `meds-dev-evaluation` shells out to
+`meds-evaluation-cli`. With a `uv tool` install, only MEDS-DEV's *own* entry points are symlinked
+into `~/.local/bin`; its dependencies' scripts live solely inside the tool environment. So removing
+an activated venv from `PATH` leaves the inner command missing, and leaving it there lets an
+unrelated copy serve it — which fails with an opaque omegaconf traceback that reads like a
+config-override bug. `run_pipeline.sh` does both: strips `$VIRTUAL_ENV/bin` from `PATH` and prepends
+MEDS-DEV's tool environment (derived from the `meds-dev-model` shebang).
 
 **Cost warning.** Tabularization is *task-specific* — MEDS-Tab materializes features only at each
 task's label prediction times (`label_df` feeds `get_flat_static_rep`), so all 10 tasks each pay a
 full tabularize-static + tabularize-time-series pass over every shard, and `meds_tab/tiny` pins
 `worker="range(0,1)"` (a single worker). Run one task first and time it before looping.
+
+### Storage and footprint
+
+Tabularized features land in
+`$WORK/baseline/{dataset}/{task}/train/meds_tab/tabularize/{split}/{shard}/{window}/{agg}.npz` —
+one file per `shard x window_size x agg`, so 366 shards x 2 x 2 = **1,464 npz per task**, 14,640
+across ten. `tabularize-static` writes nothing here: `static_aggs` keeps only static aggregations,
+and this recipe's `aggs=[code/count,value/sum]` contains none.
+
+Size scales with `label_rows x 100 codes x 4 (window,agg) combinations`. For the ten selected tasks
+that's 1.38M label rows total. Bounds: ~0.1 GB if density matches the synthetic fixture, ~2 GB if
+every code is present in every window (fully dense). Expect a few hundred MB — real ICU patients
+have far denser 7-day windows than the fixture. Trivial either way; the pipeline artifacts already
+in `work/` are ~93 MB. The `baseline` step prints actual disk per task, so the first task calibrates
+the rest.
+
+### Parallelism and memory
+
+`JOBS` bounds *threads inside one process*, not concurrent processes: `POLARS_MAX_THREADS` for
+MEDS-Tab's polars and `OMP_NUM_THREADS` for XGBoost. The `meds_tab/tiny` recipe itself pins
+`worker="range(0,1)"` (one joblib worker) and `hydra.sweeper.n_jobs=1` (serial hyperparameter
+trials), and this script runs tasks one at a time — so a baseline run is essentially single-process.
+Peak RSS is measured and printed per task rather than assumed. To trade memory for wall time, run
+several tasks concurrently with a smaller `JOBS` each.
 
 ## Resource limits
 
