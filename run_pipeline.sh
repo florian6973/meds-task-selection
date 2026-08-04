@@ -13,6 +13,7 @@ set -euo pipefail
 MEDS="${MEDS:-$HOME/Datasets/MIMIC-IV/MEDS_cohort}"
 # Default output root: `work/` inside this repo, which .gitignore excludes.  Every generated
 # artifact (grids, labels, stats, Hydra logs) lands here and nowhere else.
+WORK_FROM_ENV="${WORK:+1}"
 WORK="${WORK:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/work}"
 JOBS="${JOBS:-4}"
 MEASURE_SPLIT="${MEASURE_SPLIT:-tuning}"
@@ -36,6 +37,30 @@ grid() { uv run --project "$SAMPLER" meds-generate-task-grid "$@"; }
 ts() { local cmd="$1"; shift; uv run --project "$SELECTION" "$cmd" "$@"; }
 
 mkdir -p "$WORK"
+echo "WORK=$WORK"
+
+# Fail fast with an actionable message rather than deep inside a long-running model command.
+require_input() {
+    local path="$1" what="$2"
+    if [[ ! -e "$path" ]]; then
+        echo "missing $what: $path" >&2
+        if [[ -n "${WORK_FROM_ENV:-}" ]]; then
+            echo "  WORK came from your environment ($WORK). If that is stale, run: unset WORK" >&2
+        fi
+        exit 1
+    fi
+}
+
+# `/usr/bin/time -v` appends ~23 lines of resource stats, which would bury the real error in a
+# plain `tail`.  Surface the exception lines instead, falling back to the tail if there are none.
+report_failure() {
+    local log="$1"
+    echo "FAILED — $log" >&2
+    if ! grep -m3 -E "^[A-Za-z_.]*(Error|Exception):" "$log" >&2; then
+        grep -vE '^[[:space:]]+(Command being timed|User time|System time|Percent of CPU|Elapsed \(wall|Average|Maximum resident|Major |Minor |Voluntary|Involuntary|Swaps|File system|Socket|Signals|Page size|Exit status)' "$log" |
+            tail -20 >&2
+    fi
+}
 
 # Build one grid per shard, JOBS at a time.  Each job is a separate process reading one ~10 MB
 # shard; per-shard Hydra log dirs keep concurrent jobs from clobbering each other's config snapshot.
@@ -139,12 +164,16 @@ if run_step baseline; then
         echo "-- dropped $_ACTIVE_VENV_BIN from PATH"
     fi
     export PATH="$MEDS_DEV_BIN:$PATH"
+    require_input "$WORK/tasks.yaml" "task registry"
     : "${TASKS_TO_RUN:=$(uv run --project "$SELECTION" python -c "
 import yaml, sys
 print(' '.join(t['task_id'] for t in yaml.safe_load(open('$WORK/tasks.yaml'))))")}"
     mkdir -p "$WORK/logs/baseline"
     for task in $TASKS_TO_RUN; do
         echo "-- $task"
+        # MEDS-Tab needs a label dir per data shard; check before paying for tabularization.
+        require_input "$WORK/labels/$task" "labels for task '$task'"
+        require_input "$WORK/labels/$task/held_out" "held_out label shards for '$task'"
         log="$WORK/logs/baseline/$task.log"
         # OMP_NUM_THREADS caps XGBoost's thread pool; POLARS_MAX_THREADS (exported above) caps
         # MEDS-Tab's polars.  The recipe itself pins joblib to one worker and XGBoost tuning to
@@ -158,8 +187,7 @@ print(' '.join(t['task_id'] for t in yaml.safe_load(open('$WORK/tasks.yaml'))))"
             "task_name=$task" \
             dataset_type=supervised \
             mode=full >"$log" 2>&1; then
-            echo "FAILED — last 20 lines of $log:" >&2
-            tail -20 "$log" >&2
+            report_failure "$log"
             exit 1
         fi
         grep -E "Maximum resident set size|Elapsed \(wall" "$log" |
