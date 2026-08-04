@@ -13,9 +13,11 @@ grid measures that.
 
 [`run_pipeline.sh`](run_pipeline.sh) runs every step below with 4-core / low-memory settings:
 
+Every generated artifact lands in `work/` inside this repo, which `.gitignore` excludes. Override
+with `WORK=...` if you want it elsewhere.
+
 ```bash
 export MEDS=~/Datasets/MIMIC-IV/MEDS_cohort
-export WORK=~/scratch/task_selection
 export JOBS=4
 
 ./run_pipeline.sh counts       # ~5 min, streams the train split
@@ -39,7 +41,7 @@ The equivalent explicit commands. All selection decisions use `train`/`tuning` s
 
 ```bash
 MEDS=~/Datasets/MIMIC-IV/MEDS_cohort
-WORK=~/scratch/task_selection   # pick anywhere outside the dataset
+WORK=./work                     # gitignored; anywhere outside the dataset works
 
 # 1. Per-code counts on the train split (writes a new file; never modifies the dataset)
 meds-ts-count-codes --data-dir $MEDS --split train --out $WORK/codes_with_counts.parquet

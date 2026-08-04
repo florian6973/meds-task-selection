@@ -1,0 +1,9 @@
+# Generated pipeline artifacts (grids, labels, stats, Hydra logs) — never commit data
+work/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/

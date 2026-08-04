@@ -11,7 +11,9 @@
 set -euo pipefail
 
 MEDS="${MEDS:-$HOME/Datasets/MIMIC-IV/MEDS_cohort}"
-WORK="${WORK:-$HOME/scratch/task_selection}"
+# Default output root: `work/` inside this repo, which .gitignore excludes.  Every generated
+# artifact (grids, labels, stats, Hydra logs) lands here and nowhere else.
+WORK="${WORK:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/work}"
 JOBS="${JOBS:-4}"
 MEASURE_SPLIT="${MEASURE_SPLIT:-tuning}"
 FINAL_SPLITS="${FINAL_SPLITS:-train tuning held_out}"
