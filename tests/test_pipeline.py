@@ -13,7 +13,11 @@ from meds_task_selection.compute_code_counts import (
     compute_code_counts,
     enrich_codes,
 )
-from meds_task_selection.extract_labels import extract_task_labels
+from meds_task_selection.extract_labels import (
+    LABEL_COLUMNS,
+    extract_task_labels,
+    write_sharded_labels,
+)
 from meds_task_selection.measure_prevalence import measure_prevalence
 from meds_task_selection.select_candidates import select_candidates
 from meds_task_selection.select_tasks import (
@@ -207,6 +211,29 @@ def test_write_registry_axis_files(tmp_path: Path):
         "LAB//A",
     ]
     assert (tmp_path / "selected_durations.txt").read_text() == "7,365\n"
+
+
+def test_sharded_labels_mirror_data_shards(tmp_path: Path):
+    """MEDS-Tab resolves labels per data shard, so every shard needs a file — even empty ones."""
+    grid_dir = tmp_path / "grid" / "train"
+    grid_dir.mkdir(parents=True)
+    # Shard 0 has both tasks; shard 1 has only LAB//B -> LAB//A's shard 1 must still be written.
+    make_grid({("LAB//A", 7.0): (3, 5, 2), ("LAB//B", 7.0): (1, 1, 0)}).write_parquet(
+        grid_dir / "0.parquet"
+    )
+    make_grid({("LAB//B", 7.0): (2, 2, 0)}).write_parquet(grid_dir / "1.parquet")
+
+    out = tmp_path / "labels"
+    task = {"task_id": "LAB_A_7d", "query": "LAB//A", "duration_days": 7.0}
+    n_shards, n_rows, n_pos = write_sharded_labels(tmp_path / "grid", out, task, "train")
+
+    assert (n_shards, n_rows, n_pos) == (2, 8, 3)  # censored rows dropped
+    assert (out / "LAB_A_7d" / "train" / "0.parquet").exists()
+    empty = out / "LAB_A_7d" / "train" / "1.parquet"
+    assert empty.exists(), "shard with no rows for this task still needs a file"
+    empty_df = pl.read_parquet(empty)
+    assert empty_df.height == 0
+    assert empty_df.columns == list(LABEL_COLUMNS)  # schema preserved so scan_parquet works
 
 
 def test_task_id_slug():

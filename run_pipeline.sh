@@ -107,4 +107,40 @@ if run_step labels; then
         --splits $FINAL_SPLITS --out-dir "$WORK/labels"
 fi
 
+# 9. MEDS-DEV baseline: meds_tab/tiny, one task at a time.  Tabularization is task-specific
+# (MEDS-Tab materializes features only at each task's label prediction times), so every task pays
+# a full tabularization pass — run one first and time it before looping over all ten.
+# Set TASKS_TO_RUN to a subset, e.g. TASKS_TO_RUN="LAB_51146_3d".
+if run_step baseline; then
+    echo "== meds_tab/tiny baseline"
+    : "${DATASET_NAME:=MIMIC-IV}"
+    # The MEDS-DEV CLIs shell out to sibling tools (notably meds-evaluation-cli).  If another
+    # venv sits earlier on PATH, its copy wins and the inner command fails with a confusing
+    # omegaconf traceback, so put MEDS-DEV's own environment first.
+    if ! command -v meds-dev-model >/dev/null; then
+        echo "meds-dev-model not found; install MEDS-DEV (uv tool install meds-dev)" >&2
+        exit 1
+    fi
+    MEDS_DEV_BIN="$(dirname "$(sed -n '1s|^#!||p' "$(command -v meds-dev-model)")")"
+    export PATH="$MEDS_DEV_BIN:$PATH"
+    : "${TASKS_TO_RUN:=$(uv run --project "$SELECTION" python -c "
+import yaml, sys
+print(' '.join(t['task_id'] for t in yaml.safe_load(open('$WORK/tasks.yaml'))))")}"
+    for task in $TASKS_TO_RUN; do
+        echo "-- $task"
+        OMP_NUM_THREADS="$JOBS" meds-dev-model \
+            model=meds_tab/tiny \
+            "dataset_dir=$MEDS" \
+            "labels_dir=$WORK/labels/$task" \
+            "output_dir=$WORK/baseline" \
+            "dataset_name=$DATASET_NAME" \
+            "task_name=$task" \
+            dataset_type=supervised \
+            mode=full
+        meds-dev-evaluation \
+            "predictions_dir=$WORK/baseline/$DATASET_NAME/$task/predict" \
+            "output_dir=$WORK/baseline_eval/$task"
+    done
+fi
+
 echo "done: $step"

@@ -96,6 +96,53 @@ imminent discharge — the prevalence band usually removes them, but review the 
 stratum may contain ICD-9/ICD-10 duplicates of one concept; `--max-per-code` does not catch those,
 so check `tasks.yaml` descriptions before freezing it.
 
+## MEDS-DEV baseline (meds_tab/tiny)
+
+```bash
+./run_pipeline.sh baseline                        # every task in tasks.yaml
+TASKS_TO_RUN="LAB_51146_3d" ./run_pipeline.sh baseline   # or just one
+```
+
+which is, per task:
+
+```bash
+meds-dev-model \
+    model=meds_tab/tiny \
+    dataset_dir=$MEDS \
+    labels_dir=$WORK/labels/$TASK \
+    output_dir=$WORK/baseline \
+    dataset_name=MIMIC-IV task_name=$TASK \
+    dataset_type=supervised mode=full
+
+meds-dev-evaluation \
+    predictions_dir=$WORK/baseline/MIMIC-IV/$TASK/predict \
+    output_dir=$WORK/baseline_eval/$TASK
+```
+
+`mode=full` runs supervised train then predict, sets the predict split to `held_out` itself (passing
+`split=` alongside `mode=full` is an error), and writes to
+`$WORK/baseline/{dataset_name}/{task_name}/{train,predict}/`. MEDS-DEV builds its own venv holding
+`meds-tab==0.2.0`, so nothing is installed into this project.
+
+**Labels must be sharded** — `meds-ts-labels` defaults to the `sharded` layout for exactly this
+reason. MEDS-Tab resolves a shard's labels as
+`input_label_dir / shard_fp.relative_to(shard_fp.parents[1])` and `scan_parquet`s that path for
+*every* data shard, so `{labels_dir}/{split}/{shard}.parquet` must mirror
+`{data_dir}/data/{split}/{shard}.parquet` name for name, including empty files for shards with no
+rows. The `flat` layout will not work here. Don't leave both layouts in one directory: MEDS-Tab's
+task caching globs `**/*.parquet` and would read the same labels twice.
+
+**PATH matters.** The MEDS-DEV CLIs shell out to sibling tools (`meds-evaluation-cli`). If another
+virtualenv is earlier on `PATH` — an activated project venv, say — its copy runs instead and fails
+with an opaque omegaconf traceback that looks like a config-override error. `run_pipeline.sh`
+prepends MEDS-DEV's own environment (derived from the `meds-dev-model` shebang) and unsets
+`VIRTUAL_ENV` to avoid this.
+
+**Cost warning.** Tabularization is *task-specific* — MEDS-Tab materializes features only at each
+task's label prediction times (`label_df` feeds `get_flat_static_rep`), so all 10 tasks each pay a
+full tabularize-static + tabularize-time-series pass over every shard, and `meds_tab/tiny` pins
+`worker="range(0,1)"` (a single worker). Run one task first and time it before looping.
+
 ## Resource limits
 
 To stay within ~4 cores / 20 GB on a larger machine:
