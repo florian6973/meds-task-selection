@@ -28,6 +28,14 @@
 #: Only used to name output subdirectories, so it need not match a MEDS-DEV dataset registry entry.
 : "${DATASET_NAME:=MIMIC-IV}"
 
+#: Optional shared model venv, built by `slurm/prebuild-venv.sh`. Set this when compute nodes have no
+#: network access (MEDS-DEV otherwise builds the venv with `uv` at job time) or to avoid ten copies of
+#: the same 1.2 GB environment. Leave empty to let each element build its own under its output_dir.
+#: Only ever point this at a venv that is already fully built: MEDS-DEV creates venvs with
+#: `uv venv --clear`, so concurrent elements racing to populate one would wipe it out from under
+#: each other. Once the install marker exists, they only read it.
+: "${VENV_DIR:=}"
+
 # ---------------------------------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------------------------------

@@ -19,6 +19,19 @@ copy the whole tree rather than individual files. If the cluster's copy of MIMIC
 differently from the workstation's, regenerate labels there instead — `meds-ts-labels` needs only
 `final_grid`, not the raw data.
 
+## 1b. Get the code onto the cluster
+
+The labels are data and travel by rsync; everything else is in git. If the destination directory
+already holds only the rsynced `work/`, attach it to the remote rather than cloning over it —
+`work/` is gitignored, so checkout leaves it alone:
+
+```bash
+cd /groups/mm6677_gp/ffp2106/Git/meds-task-selection
+git init -q
+git remote add origin https://github.com/florian6973/meds-task-selection.git
+git fetch -q origin && git checkout -B main origin/main
+```
+
 ## 2. Point `slurm/config.sh` at the cluster
 
 Edit `MEDS_ROOT`, `LABELS_ROOT`, `TASKS_YAML`, `RUN_DIR`, and `SETUP` (whatever puts `meds-dev-model`
@@ -26,12 +39,28 @@ and `uv` on PATH — a module load, a conda activate, or nothing if `meds-dev` i
 already on PATH). Scheduler knobs — `ACCOUNT`, `QOS`, `PARTITION`, `CPUS`, `MEM`, `TIME`,
 `MAX_CONCURRENT` — are all overridable from the environment for one-offs.
 
-## 3. Submit
+## 3. Build the model venv once (recommended)
+
+MEDS-DEV builds a model's venv at job time with `uv`, which needs a package index. Compute nodes
+frequently have no outbound network, so build it on the login node first — this also lets all ten
+elements share one 1.2 GB environment instead of building their own:
+
+```bash
+export VENV_DIR=$PWD/work/runs/meds-tab-venv
+./slurm/prebuild-venv.sh
+```
+
+Then keep `VENV_DIR` exported (or set it in `config.sh`) when submitting. Jobs log
+`Requirements already installed in …` and skip the build. Skip this step only if you know compute
+nodes can reach PyPI.
+
+## 4. Submit
 
 ```bash
 ./slurm/submit.sh --dry-run                 # prints the sbatch line, submits nothing
-./slurm/submit.sh                           # every task in tasks.yaml
 ./slurm/submit.sh --tasks LAB_51146_3d      # just one, to validate before the full array
+./slurm/submit.sh                           # every task in tasks.yaml
+squeue -u $USER                             # watch; logs land in slurm-logs/
 ```
 
 Start with one task. It validates the whole chain — venv build, tabularization, XGBoost, evaluation

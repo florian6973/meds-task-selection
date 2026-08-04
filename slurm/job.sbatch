@@ -43,15 +43,25 @@ out="$RUN_DIR/$task"
 
 echo "[$(date -Is)] host=$(hostname) job=${SLURM_JOB_ID:-none} array=${SLURM_ARRAY_TASK_ID:-none} task=$task"
 
-srun --unbuffered /usr/bin/time -v meds-dev-model \
-  model=meds_tab/tiny \
-  "dataset_dir=$MEDS_ROOT" \
-  "labels_dir=$labels" \
-  "output_dir=$out" \
-  "dataset_name=$DATASET_NAME" \
-  "task_name=$task" \
-  dataset_type=supervised \
+MODEL_ARGS=(
+  model=meds_tab/tiny
+  "dataset_dir=$MEDS_ROOT"
+  "labels_dir=$labels"
+  "output_dir=$out"
+  "dataset_name=$DATASET_NAME"
+  "task_name=$task"
+  dataset_type=supervised
   mode=full
+)
+# A prebuilt venv is reused only if its install marker is already there; without one MEDS-DEV would
+# rebuild it with `uv venv --clear` and concurrent elements would clobber each other.
+if [ -n "${VENV_DIR:-}" ]; then
+  compgen -G "$VENV_DIR/.installed.*.txt" >/dev/null ||
+    { echo "VENV_DIR=$VENV_DIR is not a built venv; run slurm/prebuild-venv.sh first" >&2; exit 1; }
+  MODEL_ARGS+=("venv_dir=$VENV_DIR")
+fi
+
+srun --unbuffered /usr/bin/time -v meds-dev-model "${MODEL_ARGS[@]}"
 
 srun --unbuffered meds-dev-evaluation \
   "predictions_dir=$out/$DATASET_NAME/$task/predict" \
