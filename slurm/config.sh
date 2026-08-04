@@ -50,6 +50,15 @@
 : "${TIME:=08:00:00}"  # --time; one task measured ~3 h on a workstation, so this has headroom
 : "${MAX_CONCURRENT:=}" # array throttle, e.g. 4 -> `--array=1-10%4`. Empty means no limit.
 
+#: --gres, e.g. `gpu:1`. Needed only to satisfy a GPU partition's requirements: this baseline does
+#: not use a GPU. MEDS-Tab pins XGBoost to `device: cpu` and `nthread: 1`, the `meds_tab/tiny` recipe
+#: never overrides either, and the run's real cost is tabularization, which is CPU-bound polars work.
+#: Requesting a GPU will not make it faster.
+: "${GRES:=}"
+
+#: Any further sbatch flags, word-split verbatim, e.g. `--constraint=avx512 --exclude=node[01-04]`.
+: "${SBATCH_EXTRA:=}"
+
 # ---------------------------------------------------------------------------------------------------
 # The job environment
 # ---------------------------------------------------------------------------------------------------

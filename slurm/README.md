@@ -124,5 +124,23 @@ To trade disk for that time, pre-build one venv, let a single warm-up element po
 `.installed.<hash>.txt` marker, then point every element at it with `venv_dir=` — `temp_env` skips
 installation when that marker matches, but only once it exists, so the warm-up must complete first.
 
-`CPUS` bounds threads *within* an element (XGBoost, polars); the recipe pins joblib to one worker, so
-raising it past ~4 buys little. Prefer more concurrent array elements over more cores each.
+`CPUS` bounds threads *within* an element; the recipe pins joblib to one worker and MEDS-Tab pins
+XGBoost to `nthread: 1`, so beyond polars this buys little past ~4. Prefer more concurrent array
+elements over more cores each.
+
+### GPU partitions
+
+**This baseline does not use a GPU.** MEDS-Tab's XGBoost defaults to `device: cpu` with
+`nthread: 1`, and `meds_tab/tiny` never overrides either; the run's cost is dominated by
+tabularization, which is CPU-bound polars work. A GPU would sit idle.
+
+Submit to a GPU partition only if that is where your allocation or the short queue is:
+
+```bash
+PARTITION=gpu GRES=gpu:1 ./slurm/submit.sh
+```
+
+`SBATCH_EXTRA` passes anything else through verbatim (`--constraint=…`, `--exclude=…`). Actually
+using a GPU would mean overriding `model_launcher.model.device=cuda` in the `meds-tab-xgboost`
+call, which lives in MEDS-DEV's `meds_tab/tiny/model.yaml` — so it needs an editable install of
+MEDS-DEV, and would still only touch the minutes spent training, not the hours spent tabularizing.

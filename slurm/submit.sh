@@ -54,6 +54,9 @@ CMD=(sbatch "--array=$ARRAY" "--cpus-per-task=$CPUS" "--mem=$MEM" "--time=$TIME"
 [ -n "$ACCOUNT" ] && CMD+=("--account=$ACCOUNT")
 [ -n "$QOS" ] && CMD+=("--qos=$QOS")
 [ -n "$PARTITION" ] && CMD+=("--partition=$PARTITION")
+[ -n "$GRES" ] && CMD+=("--gres=$GRES")
+# shellcheck disable=SC2206  # deliberate word splitting: a list of extra sbatch flags
+[ -n "$SBATCH_EXTRA" ] && CMD+=($SBATCH_EXTRA)
 CMD+=(slurm/job.sbatch "$TASKS_FILE")
 
 echo "$N task(s) -> $TASKS_FILE"
