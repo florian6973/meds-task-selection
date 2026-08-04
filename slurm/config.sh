@@ -60,6 +60,22 @@
 : "${SBATCH_EXTRA:=}"
 
 # ---------------------------------------------------------------------------------------------------
+# What to run, and how hard
+# ---------------------------------------------------------------------------------------------------
+
+#: Which MEDS-DEV model. `random_predictor` has no training step and finishes in seconds — use it to
+#: validate the whole labels -> predict -> evaluate loop and to get each task's empirical chance
+#: baseline before spending hours on a real model.
+: "${MODEL:=meds_tab/tiny}"
+
+#: Tabularization workers. The `meds_tab/tiny` recipe hardcodes ONE (`worker="range(0,1)"`), which is
+#: what makes a task take hours. Setting this above 1 runs MEDS-Tab's CLIs directly — the same
+#: commands the recipe issues, only with more joblib workers — instead of going through
+#: `meds-dev-model`. Workers coordinate through MEDS-Transforms' file lock and skip finished shards,
+#: so this is safe. Requires VENV_DIR. Set it to $CPUS.
+: "${WORKERS:=1}"
+
+# ---------------------------------------------------------------------------------------------------
 # The job environment
 # ---------------------------------------------------------------------------------------------------
 

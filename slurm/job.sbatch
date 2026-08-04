@@ -43,8 +43,47 @@ out="$RUN_DIR/$task"
 
 echo "[$(date -Is)] host=$(hostname) job=${SLURM_JOB_ID:-none} array=${SLURM_ARRAY_TASK_ID:-none} task=$task"
 
+tab_dir="$out/$DATASET_NAME/$task/train/meds_tab"
+pred_dir="$out/$DATASET_NAME/$task/predict"
+
+# Fast path: issue MEDS-Tab's own CLIs with WORKERS joblib workers.  These are the exact commands
+# `meds_tab/tiny` runs -- only `worker="range(0,N)"` differs, which the recipe pins to 1 and cannot be
+# overridden through meds-dev-model.  Workers coordinate via MEDS-Transforms' rwlock and skip shards
+# another worker finished, so raising the count only adds throughput.
+if [ "$MODEL" = "meds_tab/tiny" ] && [ "${WORKERS:-1}" -gt 1 ]; then
+  [ -n "${VENV_DIR:-}" ] && compgen -G "$VENV_DIR/.installed.*.txt" >/dev/null ||
+    { echo "WORKERS>1 needs a prebuilt VENV_DIR; run slurm/prebuild-venv.sh" >&2; exit 1; }
+  VB="$VENV_DIR/bin"
+  TAB_ARGS=(
+    "input_dir=$MEDS_ROOT/data" "output_dir=$tab_dir" do_overwrite=False
+    "input_label_dir=$labels"
+    "tabularization.aggs=[code/count,value/sum]"
+    "tabularization.window_sizes=[7d,30d]"
+    "tabularization.max_included_codes=100"
+  )
+  echo "[$(date -Is)] tabularizing with $WORKERS workers"
+  srun --unbuffered "$VB/meds-tab-describe" "input_dir=$MEDS_ROOT/data" "output_dir=$tab_dir"
+  srun --unbuffered "$VB/meds-tab-tabularize-static" "${TAB_ARGS[@]}"
+  srun --unbuffered "$VB/meds-tab-tabularize-time-series" --multirun \
+    "worker=range(0,$WORKERS)" hydra/launcher=joblib "${TAB_ARGS[@]}"
+  echo "[$(date -Is)] training xgboost"
+  srun --unbuffered "$VB/meds-tab-xgboost" --multirun \
+    "input_dir=$MEDS_ROOT/data" "output_dir=$tab_dir" \
+    "output_model_dir=$out/$DATASET_NAME/$task/train/results" \
+    task_name=null do_overwrite=False \
+    "hydra.sweeper.n_trials=20" "hydra.sweeper.n_jobs=1" \
+    "input_tabularized_cache_dir=$tab_dir/tabularize/" \
+    "input_label_cache_dir=$labels" \
+    "tabularization.aggs=[code/count,value/sum]" \
+    "tabularization.window_sizes=[7d,30d]" \
+    "tabularization.max_included_codes=100" tabularization.min_code_inclusion_count=null
+  latest=$(ls -td "$out/$DATASET_NAME/$task/train/results"/*/ | head -n 1)
+  mkdir -p "$pred_dir"
+  cp "$latest/best_trial/held_out_predictions.parquet" "$pred_dir/predictions.parquet"
+else
+
 MODEL_ARGS=(
-  model=meds_tab/tiny
+  "model=$MODEL"
   "dataset_dir=$MEDS_ROOT"
   "labels_dir=$labels"
   "output_dir=$out"
@@ -54,8 +93,10 @@ MODEL_ARGS=(
   mode=full
 )
 # A prebuilt venv is reused only if its install marker is already there; without one MEDS-DEV would
-# rebuild it with `uv venv --clear` and concurrent elements would clobber each other.
-if [ -n "${VENV_DIR:-}" ]; then
+# rebuild it with `uv venv --clear` and concurrent elements would clobber each other.  Only offer it
+# to meds_tab: another model's requirements hash would not match, and MEDS-DEV's response to a
+# mismatch is to delete the venv -- which would destroy the shared meds-tab environment.
+if [ -n "${VENV_DIR:-}" ] && [ "$MODEL" = "meds_tab/tiny" ]; then
   compgen -G "$VENV_DIR/.installed.*.txt" >/dev/null ||
     { echo "VENV_DIR=$VENV_DIR is not a built venv; run slurm/prebuild-venv.sh first" >&2; exit 1; }
   MODEL_ARGS+=("venv_dir=$VENV_DIR")
@@ -73,6 +114,7 @@ done
 # `${TIMER[@]+...}` rather than a bare `"${TIMER[@]}"`: expanding an empty array under `set -u` is an
 # unbound-variable error on bash < 4.4, which is still what RHEL 7 era compute nodes ship.
 srun --unbuffered ${TIMER[@]+"${TIMER[@]}"} meds-dev-model "${MODEL_ARGS[@]}"
+fi
 
 srun --unbuffered meds-dev-evaluation \
   "predictions_dir=$out/$DATASET_NAME/$task/predict" \

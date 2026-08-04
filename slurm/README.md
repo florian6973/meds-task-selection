@@ -105,6 +105,42 @@ hardware.
 Both `submit.sh` and `job.sbatch` check that a task's label shards exist before doing any work, so a
 bad path fails in seconds on the login node rather than hours into an array element.
 
+## Making it faster
+
+The `meds_tab/tiny` recipe hardcodes `worker="range(0,1)"` — a single tabularization worker — which
+is what makes a task take hours. `WORKERS` lifts that:
+
+```bash
+CPUS=8 WORKERS=8 ./slurm/submit.sh
+```
+
+Above 1, the job issues MEDS-Tab's CLIs directly with that many joblib workers instead of going
+through `meds-dev-model`. They are the same commands the recipe runs, with only the worker count
+changed; workers coordinate through MEDS-Transforms' file lock and skip shards another worker
+finished. Verified to produce identical metrics to the `meds-dev-model` path on the same input.
+Requires a prebuilt `VENV_DIR`, and the job refuses to start without one.
+
+Tabularization is I/O- and CPU-bound per shard, so scaling is close to linear until the filesystem
+saturates: 8 workers should turn ~3 h into well under an hour. Raise `CPUS` alongside `WORKERS`,
+since joblib runs them as processes inside the element's allocation.
+
+### A quicker model
+
+```bash
+MODEL=random_predictor ./slurm/submit.sh
+```
+
+`random_predictor` has no training step and finishes in **seconds per task**. It is not a real
+baseline — it draws uniform random probabilities — but it validates the whole
+labels -> predict -> evaluate loop across all ten tasks immediately, and its average precision is
+each task's empirical chance floor, which is the number you want to compare meds-tab against.
+Run this first; it costs nothing and tells you whether anything downstream is misconfigured before
+you spend hours.
+
+`VENV_DIR` is deliberately ignored for models other than `meds_tab/tiny`: another model's
+requirements hash would not match, and MEDS-DEV's response to a mismatch is to delete the venv,
+which would destroy the shared MEDS-Tab environment.
+
 ## Tracking progress
 
 ```bash
