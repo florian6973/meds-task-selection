@@ -3,6 +3,41 @@
 One array element per task. Tabularization measured ~3 h per task single-worker, so ten tasks run in
 ~3 h wall instead of ~30 h serially.
 
+## 0. Install MEDS-DEV on the cluster
+
+You do **not** need to clone MEDS-DEV. It ships console scripts, and `uv tool install` puts them on
+PATH in their own isolated environment — clone only if you intend to edit a recipe (e.g. raising
+`worker="range(0,N)"` in `meds_tab/tiny/model.yaml`), since the installed copy is what executes.
+
+Install from **git**, not PyPI: the released version lags the repository (0.0.14 versus the
+0.0.15.dev main-branch build these scripts were validated against).
+
+```bash
+# Home quotas on HPC are small and uv's cache is not; keep both in group space.
+export UV_CACHE_DIR=/groups/mm6677_gp/$USER/.cache/uv
+export UV_TOOL_DIR=/groups/mm6677_gp/$USER/.local/uv-tools
+export UV_TOOL_BIN_DIR=/groups/mm6677_gp/$USER/.local/bin
+
+python -m pip install --user uv          # skip if uv is already available
+uv tool install git+https://github.com/Medical-Event-Data-Standard/MEDS-DEV.git
+
+export PATH="$UV_TOOL_BIN_DIR:$PATH"
+meds-dev-model --help | head -3          # verify
+```
+
+The tool environment is ~540 MB. Pin the exact build with
+`uv tool install "meds-dev @ git+https://github.com/Medical-Event-Data-Standard/MEDS-DEV.git@<sha>"`
+if you want the array reproducible later.
+
+Then set `SETUP` in `slurm/config.sh` so compute nodes see it:
+
+```bash
+: "${SETUP=export PATH=/groups/mm6677_gp/$USER/.local/bin:$PATH}"
+```
+
+`uv` itself is only needed on the login node: with a prebuilt `VENV_DIR` (step 3) the jobs skip
+installation entirely, so they need nothing but the MEDS-DEV scripts.
+
 ## 1. Copy the labels and the registry
 
 Only the labels and `tasks.yaml` need to move — the MEDS data is already on the cluster. The labels
