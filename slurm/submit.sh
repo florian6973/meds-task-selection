@@ -15,10 +15,12 @@ source slurm/config.sh
 die() { echo "slurm/submit.sh: $*" >&2; exit 1; }
 
 DRY=0
+SKIP_DONE=0
 SELECTED=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --tasks) shift; while [ $# -gt 0 ] && [ "${1:0:2}" != "--" ]; do SELECTED+=("$1"); shift; done ;;
+    --skip-done) SKIP_DONE=1; shift ;;
     --dry-run) DRY=1; shift ;;
     -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
     *) die "unknown option $1 (see --help)" ;;
@@ -36,6 +38,18 @@ if [ "${#SELECTED[@]}" -gt 0 ]; then
 else
   # Read task_ids without importing this project: the registry is a plain YAML list of mappings.
   grep -E '^\s*-?\s*task_id:' "$TASKS_YAML" | sed -E 's/.*task_id:\s*//; s/^["'\'']//; s/["'\'']$//' > "$TASKS_FILE"
+fi
+
+# Resubmitting after a cancellation re-runs every element: tabularization resumes from the files on
+# disk, but XGBoost restarts. --skip-done drops tasks that already produced a results.json.
+if [ "$SKIP_DONE" -eq 1 ]; then
+  remaining=$(mktemp)
+  while read -r task; do
+    [ -f "$RUN_DIR/eval/$task/results.json" ] || printf '%s\n' "$task" >> "$remaining"
+  done < "$TASKS_FILE"
+  skipped=$(( $(wc -l < "$TASKS_FILE") - $(wc -l < "$remaining" 2>/dev/null || echo 0) ))
+  [ "$skipped" -gt 0 ] && echo "skipping $skipped task(s) with results already"
+  mv "$remaining" "$TASKS_FILE"
 fi
 
 N=$(wc -l < "$TASKS_FILE")

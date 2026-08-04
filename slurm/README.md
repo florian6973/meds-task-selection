@@ -171,6 +171,38 @@ sacct -j <jobid> --format=JobID,State,ExitCode | grep -v COMPLETED   # what fail
 `MaxRSS` from `sacct` is the number to trust when tuning `MEM` for later runs — each job also runs
 under `/usr/bin/time -v`, so its peak RSS is at the end of the element's log.
 
+## Cancelling and restarting
+
+Resubmitting **resumes**, it does not start over — but do one cleanup step first:
+
+```bash
+./slurm/repair.sh              # report half-written files
+./slurm/repair.sh --delete     # remove them
+./slurm/submit.sh --skip-done  # requeue only tasks without a results.json
+```
+
+What actually happens per stage:
+
+| Stage | On restart |
+| --- | --- |
+| `meds-tab-describe`, tabularize-static | skipped if output exists |
+| tabularize-time-series | **resumes** — each existing npz is skipped (`… exists; returning`) |
+| XGBoost | re-runs from scratch (minutes; writes a new timestamped results dir) |
+| via `meds-dev-model` (`WORKERS=1`) | a stage that fully succeeded is skipped via its `.done` sentinel |
+
+Two details behind `repair.sh`:
+
+*Stale `.lock` files are harmless.* MEDS-Transforms locks with `filelock`, which takes an OS-level
+lock the kernel drops when the process dies. Verified: after `kill -9` on a lock holder, the lock
+file remains on disk but is immediately re-acquirable. They are deleted only to reduce confusion.
+
+*Truncated `.npz` files are not harmless.* MEDS-Transforms decides a shard is done with
+`Path.is_file()` for `.npz` — only `.parquet` gets a real completeness check. A worker killed
+mid-write leaves a partial file that every later run skips, so the corruption is silent and
+permanent. `repair.sh` opens each npz as the zip archive it is and verifies every member, then
+deletes the unreadable ones so a resumed run regenerates them. A `scancel` can damage at most one
+file per active worker, so this is quick to fix but worth always doing after an interrupted run.
+
 ## Layout and sizing
 
 ```
