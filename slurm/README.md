@@ -102,6 +102,29 @@ Start with one task. It validates the whole chain — venv build, tabularization
 — for the cost of a single element, and tells you the real per-task time and memory on your
 hardware.
 
+For the group-space layout used on the cluster, the complete 16-core submission is:
+
+```bash
+cd /groups/mm6677_gp/ffp2106/Git/meds-task-selection
+
+# Preview the ten-element array without submitting it.
+VENV_DIR="$PWD/work/runs/meds-tab-venv" CPUS=16 WORKERS=16 \
+    ./slurm/submit.sh --dry-run
+
+# Submit all ten tasks from work/tasks.yaml (assuming TASKS_YAML is configured accordingly).
+VENV_DIR="$PWD/work/runs/meds-tab-venv" CPUS=16 WORKERS=16 \
+    ./slurm/submit.sh
+```
+
+This requests 16 CPUs for **each** array element, so ten elements can consume up to 160 CPUs at
+once. Add `MAX_CONCURRENT=2`, for example, to run at most two elements concurrently. `WORKERS=16`
+requires the already-built `VENV_DIR`; without `WORKERS=16`, merely allocating 16 CPUs provides
+little benefit because the stock recipe uses one tabularization worker.
+
+The command uses `PARTITION` from `slurm/config.sh`, or the site's default partition when it is
+empty. `PARTITION=gpu GRES=gpu:1` explicitly requests a GPU partition, but this baseline is
+CPU-only and the GPU will sit idle; use that only when site policy requires the GPU partition.
+
 Both `submit.sh` and `job.sbatch` check that a task's label shards exist before doing any work, so a
 bad path fails in seconds on the login node rather than hours into an array element.
 
@@ -144,21 +167,23 @@ which would destroy the shared MEDS-Tab environment.
 ## Tracking progress
 
 ```bash
-./slurm/status.sh              # one line per task
-watch -n 60 ./slurm/status.sh  # live
+./slurm/status.sh              # one line per task, plus the current Slurm queue
+watch -n 60 ./slurm/status.sh  # refresh every minute
+squeue -u "$USER"              # scheduler state only
 ```
 
 ```
-TASK                                       TABULARIZE         RESULT
-LAB_51146_3d                               114/1464 (7%)      -
-INFUSION_START_220949_180d                 1464/1464 (100%)   training xgboost
-DIAGNOSIS_ICD_10_E785_365d                 1464/1464 (100%)   AUROC 0.7312  AP 0.2841
+TASK                                       CATEGORY           PREV   CENSOR TABULARIZE         RESULT
+LAB_51146_3d                               LAB               12.4%     3.1% 114/1464 (7%)      -
+INFUSION_START_220949_180d                 INFUSION          15.1%    10.8% 1464/1464 (100%)   training xgboost
+DIAGNOSIS_ICD_10_E785_365d                 DIAGNOSIS         13.8%    22.0% 1464/1464 (100%)   AUROC 0.7312  AP 0.2841
 ```
 
 SLURM alone reports only `RUNNING` for hours. Tabularization writes one npz per
 `shard x window x agg`, so that file count is the pipeline's one fine-grained progress signal;
-later stages are inferred from the artifacts they leave. `status.sh` appends `squeue` output when
-it is available.
+later stages are inferred from the artifacts they leave. Category, prevalence, and censoring come
+from `tasks.yaml`; the rates are the tuning-subsample measurements used for task selection, not
+live statistics from model training. `status.sh` appends `squeue` output when it is available.
 
 Other useful views:
 

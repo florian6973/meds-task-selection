@@ -39,6 +39,20 @@ than 10 tasks come out, the command prints per-constraint attrition naming the b
 The equivalent explicit commands. All selection decisions use `train`/`tuning` statistics only —
 `held_out` is never used to choose tasks.
 
+### Why prevalence is measured on `tuning`
+
+Task selection needs only one representative split, rather than scanning the full dataset. The
+measurement grid therefore uses a 25% subject subsample of `tuning`; this is primarily a compute
+shortcut. Using `tuning` also keeps the roles of the splits clean: `train` supplies the coarse code
+frequency prefilter and later fits the models, while `held_out` is untouched until final evaluation.
+Task selection is itself a selection decision, so measuring prevalence on `held_out` would leak
+information from the test set.
+
+Consequently, `prevalence` and `censor_rate` in `tasks.yaml` are estimates from the subsampled
+`tuning` measurement grid. They are selection metadata, not claims that the full `train`, `tuning`,
+and `held_out` label sets have identical rates. Measuring on `train` instead would also avoid test
+leakage, but would combine task choice and model fitting on the same split.
+
 ```bash
 MEDS=~/Datasets/MIMIC-IV/MEDS_cohort
 WORK=./work                     # gitignored; anywhere outside the dataset works

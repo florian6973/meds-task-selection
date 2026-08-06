@@ -28,10 +28,46 @@ if [ -d "$MEDS_ROOT/data" ]; then
 fi
 expected=$((shards * 4))
 
-printf '%-42s %-18s %s\n' TASK TABULARIZE RESULT
+# tasks.yaml records the tuning-subsample statistics used for task selection. Parse only its simple
+# top-level list of mappings here so status.sh does not acquire a PyYAML dependency on login nodes.
+task_metadata() {
+    awk -v wanted="$1" '
+        function emit() {
+            if (task == wanted) {
+                printf "%s\t%.1f%%\t%.1f%%\n", category, 100 * prevalence, 100 * censor
+                found=1
+            }
+        }
+        /^- / {
+            if (seen) emit()
+            seen=1; task=""; category=prevalence=censor="-"
+        }
+        /^[[:space:]-]*task_id:/ {
+            task=$0; sub(/^.*task_id:[[:space:]]*/, "", task); gsub(/["'\'']/, "", task)
+        }
+        /^[[:space:]]+category:/ {
+            category=$0; sub(/^.*category:[[:space:]]*/, "", category); gsub(/["'\'']/, "", category)
+        }
+        /^[[:space:]]+prevalence:/ {
+            prevalence=$0; sub(/^.*prevalence:[[:space:]]*/, "", prevalence)
+        }
+        /^[[:space:]]+censor_rate:/ {
+            censor=$0; sub(/^.*censor_rate:[[:space:]]*/, "", censor)
+        }
+        END { if (seen && !found) emit() }
+    ' "$TASKS_YAML"
+}
+
+printf '%-42s %-14s %8s %8s %-18s %s\n' TASK CATEGORY PREV CENSOR TABULARIZE RESULT
 for dir in "$RUN_DIR"/*/; do
     task=$(basename "$dir")
     [ "$task" = "eval" ] && continue
+    metadata=$(task_metadata "$task")
+    if [ -n "$metadata" ]; then
+        IFS=$'\t' read -r category prevalence censor_rate <<< "$metadata"
+    else
+        category=- prevalence=- censor_rate=-
+    fi
 
     tab="$dir/$DATASET_NAME/$task/train/meds_tab/tabularize"
     n=0
@@ -57,7 +93,8 @@ PY
     else
         line="-"
     fi
-    printf '%-42s %-18s %s\n' "$task" "$progress" "$line"
+    printf '%-42s %-14s %8s %8s %-18s %s\n' \
+        "$task" "$category" "$prevalence" "$censor_rate" "$progress" "$line"
 done
 
 if command -v squeue >/dev/null; then
